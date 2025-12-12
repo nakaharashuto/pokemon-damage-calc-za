@@ -131,7 +131,7 @@ def initialize_session_state():
              'H_base': 100, 'A_base': 130, 'B_base': 80, 'C_base': 80, 'D_base': 80, 'S_base': 100,
              'H_iv': 'さいこう/きたえた! (31)', 'A_iv': 'さいこう/きたえた! (31)', 'B_iv': 'さいこう/きたえた! (31)', 
              'C_iv': 'さいこう/きたえた! (31)', 'D_iv': 'さいこう/きたえた! (31)', 'S_iv': 'さいこう/きたえた! (31)',
-             'att_stat_name': '攻撃', 'def_stat_name': '防御'}, # 旧データ保持のため残すが、シミュレーションで上書き
+             'att_stat_name': '攻撃', 'def_stat_name': '防御'},
             {'id': str(uuid.uuid4()), 'name': '受けポケモンB', 'level': 50, 
              'H_base': 95, 'A_base': 100, 'B_base': 100, 'C_base': 100, 'D_base': 120, 'S_base': 60,
              'H_iv': 'さいこう/きたえた! (31)', 'A_iv': 'さいこう/きたえた! (31)', 'B_iv': 'さいこう/きたえた! (31)', 
@@ -143,7 +143,7 @@ def initialize_session_state():
     st.session_state['VIRTUAL_P_CHOICES'] = ["直接実数値入力"] + ["マイポケモン: " + p['name'] for p in st.session_state.get('my_pokemons', [])]
 
 
-# ★★★ 新規追加: ポケモン削除用コールバック関数 ★★★
+# ポケモン削除用コールバック関数
 def delete_pokemon_callback(index_to_delete):
     """マイポケモンリストから指定インデックスのポケモンを削除するコールバック"""
     if 'my_pokemons' in st.session_state and 0 <= index_to_delete < len(st.session_state.my_pokemons):
@@ -208,7 +208,7 @@ def register_pokemon_form():
                 'level': p_level,
                 **stat_inputs,
                 **iv_inputs,
-                'att_stat_name': '攻撃', 'def_stat_name': '防御' # ダミーとして残すがシミュレーションで上書き
+                'att_stat_name': '攻撃', 'def_stat_name': '防御'
             }
             st.session_state.my_pokemons.append(new_pokemon)
             
@@ -508,30 +508,46 @@ run_easy_mode_st = run_easy_mode_st_functional
 
 
 # --- 7. マイポケモン vs 仮想敵シミュレーションモード ---
-def get_stats_from_settings(p_data, ev_dict, nature_dict, battle_mod_dict, level):
-    """登録情報とシミュレーション入力から全実数値 (MAX/MIN) を計算して返す"""
+def get_stats_from_settings(p_data, ev_dict, nature_dict, battle_mod_dict, level, is_att_role):
+    """
+    登録情報とシミュレーション入力から全実数値 (MAX/MIN) を計算して返す。
+    is_att_role (攻撃側/防御側) に応じて、設定されていない能力値は EV=0, 補正なしとして計算する。
+    """
     stats_result = {}
     
     # 性格補正を辞書に変換
     nature_mods = {stat: 1.0 for stat in ['H', 'A', 'B', 'C', 'D', 'S']}
     for stat, nature_choice in nature_dict.items():
-        nature_mods[stat] = NATURE_MODIFIERS[nature_choice]
+        # 性格補正が設定されている場合のみ適用
+        if nature_choice in NATURE_MODIFIERS: 
+            nature_mods[stat] = NATURE_MODIFIERS[nature_choice]
+    
     
     for stat in ['H', 'A', 'B', 'C', 'D', 'S']:
         base = p_data[f'{stat}_base']
-        ev = ev_dict.get(stat, 0)
         iv_choice = p_data[f'{stat}_iv']
-        # MAX/MINの両方を計算するために、IVレンジは残す
         iv_min, iv_max = get_iv_range(iv_choice)
         
-        # 性格補正の適用 (H/Sには適用しない)
-        nature_mod = nature_mods[stat] if stat in ['A', 'B', 'C', 'D'] else 1.0
-        
-        # 戦闘中能力変化補正の適用
+        # EV/性格/戦闘補正の決定
+        ev = ev_dict.get(stat, 0)
+        nature_mod = nature_mods.get(stat, 1.0)
         battle_mod = battle_mod_dict.get(stat, 1.0)
+
+        # 役割に基づく設定制限
+        is_stat_limited = False
+        if is_att_role and stat in ['H', 'B', 'D']:
+             is_stat_limited = True
+        elif not is_att_role and stat in ['A', 'C']:
+             is_stat_limited = True
         
+        # 制限された能力値の処理 (Sは制限しない)
+        if is_stat_limited and stat != 'S':
+            ev = 0
+            nature_mod = 1.0
+            battle_mod = 1.0
+            
+        # HPの計算 (戦闘中能力変化補正は適用しない)
         if stat == 'H':
-            # HPの計算 (戦闘中能力変化補正は適用しない)
             stats_result[f'{stat}_max'] = calculate_hp_value(base, iv_max, ev, level)
             stats_result[f'{stat}_min'] = calculate_hp_value(base, iv_min, ev, level)
         else:
@@ -543,7 +559,10 @@ def get_stats_from_settings(p_data, ev_dict, nature_dict, battle_mod_dict, level
 
 
 def get_virtual_pokemon_stats(choice, my_poke_list, target_stat_name, hp_stat_name=None):
-    """直接実数値入力モードで使用する、仮想敵の素の種族値/個体値からの実数値計算（旧形式の互換用）"""
+    """
+    仮想敵 (マイポケモン参照時) の素の種族値/個体値からの実数値計算。
+    仮想敵はEV=0, 性格補正=1.0, 戦闘補正=1.0の状態でMAX実数値を返す。
+    """
     if choice == "直接実数値入力":
         return None, None, None, None, None, None
     
@@ -552,19 +571,18 @@ def get_virtual_pokemon_stats(choice, my_poke_list, target_stat_name, hp_stat_na
     p = next(p for p in my_poke_list if p['name'] == poke_name)
     level = p['level']
     
-    # 新しい登録形式から対応する種族値と個体値を取得
+    # 攻撃/防御能力値の計算 (常にEV0, 性格1.0, 戦闘1.0で計算)
     stat_map = {'攻撃': 'A', '特攻': 'C', '防御': 'B', '特防': 'D'}
     stat_key = stat_map.get(target_stat_name, 'A')
 
-    # EV/性格補正は不明なので、ここでは簡易的にEV0, 性格補正1.0, 戦闘補正1.0, 個体値MAXとして計算 (直接入力時の目安として使用)
     base = p[f'{stat_key}_base']
     iv_choice = p[f'{stat_key}_iv']
     iv_min, iv_max = get_iv_range(iv_choice)
     
-    # 簡易計算 (EV 0, 性格 1.0, 戦闘 1.0)
     stat_max = calculate_stat_value(base, iv_max, 0, level, 1.0, 1.0)
-    stat_min = calculate_stat_value(base, iv_min, 0, level, 1.0, 1.0) # 参照元としては使われないが計算しておく
+    stat_min = calculate_stat_value(base, iv_min, 0, level, 1.0, 1.0)
 
+    # HPの計算 (常にEV0, 性格1.0で計算)
     hp_max = None
     hp_min = None
     if hp_stat_name == 'H':
@@ -572,7 +590,6 @@ def get_virtual_pokemon_stats(choice, my_poke_list, target_stat_name, hp_stat_na
         hp_max = calculate_hp_value(p['H_base'], hp_iv_max, 0, level)
         hp_min = calculate_hp_value(p['H_base'], hp_iv_min, 0, level)
 
-    # 仮想敵の場合、防御能力は戦闘補正(def_battle_mod)の適用が必要だが、ここでは素の値を返し、シミュレーションパートで適用する
     return stat_max, stat_min, hp_max, hp_min, p, level
 
 
@@ -596,7 +613,7 @@ def run_battle_sim_mode_st():
         key="sim_mode_select"
     )
 
-    is_att_vs_def = (sim_mode == "⚔️ 自分のポケモン (1体) が攻撃側")
+    is_att_vs_def = ("攻撃側" in sim_mode)
     
     if is_att_vs_def:
         my_role_name = "攻撃側 (マイポケモン)"
@@ -615,15 +632,37 @@ def run_battle_sim_mode_st():
     # ------------------------------------
     st.markdown("### 2. マイポケモンの詳細設定 (EV・性格・戦闘中補正)")
     
+    
+    # 役割に基づき、編集可能な能力値リストを定義
+    if is_att_vs_def:
+        # 攻撃側: A, C, S のみ設定可能 (H, B, DはEV0/補正なしで計算される)
+        editable_stats = ['A', 'C', 'S']
+        st.caption("※ 攻撃側の役割のため、H, B, D の努力値・性格・能力変化は 0/補正なし として計算されます。")
+    else:
+        # 防御側: H, B, D, S のみ設定可能 (A, CはEV0/補正なしで計算される)
+        editable_stats = ['H', 'B', 'D', 'S']
+        st.caption("※ 防御側の役割のため、A, C の努力値・性格・能力変化は 0/補正なし として計算されます。")
+
+    display_stats = ['H', 'A', 'B', 'C', 'D', 'S']
+    
     # 努力値 (EV) 入力
     st.markdown("##### 努力値 (EV) 設定")
     ev_inputs = {}
-    stats = ['H', 'A', 'B', 'C', 'D', 'S']
     cols = st.columns(6)
-    for i, stat in enumerate(stats):
+    for i, stat in enumerate(display_stats):
         default_ev = 0 
+        is_editable = (stat in editable_stats)
+        
         with cols[i]:
-            ev_inputs[stat] = st.number_input(f"{stat} EV", min_value=0, max_value=252, value=default_ev, step=4, key=f"sim_ev_{stat}")
+            ev_inputs[stat] = st.number_input(
+                f"{stat} EV", 
+                min_value=0, 
+                max_value=252, 
+                value=default_ev, 
+                step=4, 
+                key=f"sim_ev_{stat}",
+                disabled=not is_editable
+            )
 
     # 性格補正入力
     st.markdown("##### 性格補正設定")
@@ -631,8 +670,17 @@ def run_battle_sim_mode_st():
     nature_stats = ['A', 'B', 'C', 'D']
     nature_cols = st.columns(4)
     for i, stat in enumerate(nature_stats):
+        # H, S 以外の A, B, C, D のうち、editable_statsに含まれるもののみ編集可能
+        is_editable = (stat in editable_stats)
+        
         with nature_cols[i]:
-            nature_inputs[stat] = st.selectbox(f"{stat} 性格補正", options=NATURE_CHOICES, index=0, key=f"sim_nature_{stat}")
+            nature_inputs[stat] = st.selectbox(
+                f"{stat} 性格補正", 
+                options=NATURE_CHOICES, 
+                index=0, 
+                key=f"sim_nature_{stat}",
+                disabled=not is_editable
+            )
             
     # 戦闘中能力変化補正入力
     st.markdown("##### 戦闘中能力変化補正")
@@ -640,21 +688,28 @@ def run_battle_sim_mode_st():
     battle_stats = ['A', 'B', 'C', 'D']
     battle_cols = st.columns(4)
     for i, stat in enumerate(battle_stats):
+        # 攻撃側なら A/C、防御側なら B/D のみ編集可能
+        is_editable = (is_att_vs_def and stat in ['A', 'C']) or (not is_att_vs_def and stat in ['B', 'D'])
+        
         with battle_cols[i]:
-            if (is_att_vs_def and stat in ['A', 'C']) or (not is_att_vs_def and stat in ['B', 'D']):
-                battle_mod_inputs[stat] = st.selectbox(f"{stat} 能力変化", options=BATTLE_CHOICES, index=0, key=f"sim_bm_{stat}")
-            else:
-                battle_mod_inputs[stat] = BATTLE_CHOICES[0] 
+            battle_mod_inputs[stat] = st.selectbox(
+                f"{stat} 能力変化", 
+                options=BATTLE_CHOICES, 
+                index=0, 
+                key=f"sim_bm_{stat}",
+                disabled=not is_editable
+            )
             
     # 全実数値計算 (MAX/MIN)
     my_stats = get_stats_from_settings(
         my_poke, ev_inputs, nature_inputs, 
         {stat: BATTLE_MODIFIERS[battle_mod_inputs[stat]] for stat in battle_mod_inputs}, 
-        my_poke['level']
+        my_poke['level'],
+        is_att_vs_def # 役割を渡す
     )
     
     # 実数値のブレ幅表示
-    st.caption(f"実数値 (MAX/MIN): H:{my_stats['H_max']}/{my_stats['H_min']}, A:{my_stats['A_max']}/{my_stats['A_min']}, C:{my_stats['C_max']}/{my_stats['C_min']}, B:{my_stats['B_max']}/{my_stats['B_min']}, D:{my_stats['D_max']}/{my_stats['D_min']}")
+    st.caption(f"実数値 (MAX/MIN): H:{my_stats['H_max']}/{my_stats['H_min']}, A:{my_stats['A_max']}/{my_stats['A_min']}, C:{my_stats['C_max']}/{my_stats['C_min']}, B:{my_stats['B_max']}/{my_stats['B_min']}, D:{my_stats['D_max']}/{my_stats['D_min']}, S:{my_stats['S_max']}/{my_stats['S_min']}")
     st.markdown("---")
     
     # ------------------------------------
@@ -713,22 +768,22 @@ def run_battle_sim_mode_st():
     for i in range(1, 4):
         st.markdown(f"##### 仮想敵 {i}")
         
-        # 仮想敵選択肢は st.session_state['VIRTUAL_P_CHOICES'] から取得
         virtual_choice = st.selectbox(
             "能力値の参照元", 
             options=st.session_state.get('VIRTUAL_P_CHOICES', ["直接実数値入力"]), 
             key=f"enemy_{i}_choice"
         )
         
-        # 仮想敵のデフォルト値設定（直接入力の目安またはマイポケモンからの参照）
         enemy_hp = 200
         enemy_stat_val = 150
         enemy_power = power 
         
         enemy_p = None
+        # マイポケモン参照時の、目安/参照値を取得
         if "マイポケモン:" in virtual_choice:
+            target_stat_name_ref = def_stat_name if is_att_vs_def else att_stat_name
             stat_max, _, hp_max, _, enemy_p, _ = get_virtual_pokemon_stats(
-                virtual_choice, st.session_state.my_pokemons, def_stat_name if is_att_vs_def else att_stat_name, 'H'
+                virtual_choice, st.session_state.my_pokemons, target_stat_name_ref, 'H'
             )
             if enemy_p:
                 enemy_stat_val = stat_max if stat_max is not None else 150
@@ -760,6 +815,7 @@ def run_battle_sim_mode_st():
                     st.text_input(f"{att_stat_name}実数値 (参照/目安)", value=enemy_stat_val, disabled=True, key=f"enemy_{i}_att_disp")
         
         # 攻撃側が相手の場合、技威力とアイテム補正を個別に設定
+        current_att_base_mod = att_base_mod
         if not is_att_vs_def:
             with col_power_i:
                 enemy_power = st.number_input("技の威力", min_value=1, value=enemy_power, step=1, key=f"enemy_{i}_power")
@@ -776,13 +832,13 @@ def run_battle_sim_mode_st():
                 tech_plus_choice_e = st.selectbox("ZA補正", options=TECHNIQUE_PLUS_MODIFIERS, index=0, key=f"enemy_{i}_tech_plus")
                 tech_plus_mod_e = TECHNIQUE_PLUS_MODIFIERS[tech_plus_choice_e]
             
-            att_base_mod = stab_mod_e * other_mod_e * tech_plus_mod_e 
+            current_att_base_mod = stab_mod_e * other_mod_e * tech_plus_mod_e 
             
         with col_type_mod: 
             type_mod_i = st.selectbox("タイプ相性", options=list(TYPE_EFFECTIVENESS_CHOICES.keys()), index=TYPE_1_0_INDEX, key=f"enemy_{i}_type")
             type_mod_val = TYPE_EFFECTIVENESS_CHOICES[type_mod_i]
 
-        final_correction_ratio = att_base_mod * type_mod_val * wall_mod
+        final_correction_ratio = current_att_base_mod * type_mod_val * wall_mod
         
         enemy_stats.append({
             'name': name, 
