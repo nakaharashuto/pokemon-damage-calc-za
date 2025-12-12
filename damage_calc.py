@@ -143,6 +143,15 @@ def initialize_session_state():
     st.session_state['VIRTUAL_P_CHOICES'] = ["直接実数値入力"] + ["マイポケモン: " + p['name'] for p in st.session_state.get('my_pokemons', [])]
 
 
+# ★★★ 新規追加: ポケモン削除用コールバック関数 ★★★
+def delete_pokemon_callback(index_to_delete):
+    """マイポケモンリストから指定インデックスのポケモンを削除するコールバック"""
+    if 'my_pokemons' in st.session_state and 0 <= index_to_delete < len(st.session_state.my_pokemons):
+        st.session_state.my_pokemons.pop(index_to_delete)
+        # 仮想敵選択肢も更新
+        st.session_state['VIRTUAL_P_CHOICES'] = ["直接実数値入力"] + ["マイポケモン: " + p['name'] for p in st.session_state.get('my_pokemons', [])]
+
+
 def display_pokemon_list():
     """登録済みポケモンリストをサイドバーに表示する (表示は種族値/個体値のみ)"""
     st.sidebar.markdown("### 登録済みポケモンリスト (マイポケモン)")
@@ -151,10 +160,13 @@ def display_pokemon_list():
         return
         
     for i, p in enumerate(st.session_state.my_pokemons):
-        if st.sidebar.button("削除", key=f"delete_btn_{p['id']}"):
-            st.session_state.my_pokemons.pop(i)
-            st.experimental_rerun()
-            return
+        # 修正: buttonのon_clickを使ってコールバックを指定
+        st.sidebar.button(
+            "削除", 
+            key=f"delete_btn_{p['id']}",
+            on_click=delete_pokemon_callback,
+            args=(i,) # コールバックに渡す引数
+        )
             
         with st.sidebar.expander(f"No.{i+1} : **{p['name']}**"):
             level = p.get('level', 50)
@@ -204,7 +216,7 @@ def register_pokemon_form():
             st.session_state['VIRTUAL_P_CHOICES'] = ["直接実数値入力"] + ["マイポケモン: " + p['name'] for p in st.session_state.get('my_pokemons', [])]
             st.success(f"{p_name} を登録しました！")
             
-            # ★★★ st.experimental_rerun() は削除しました ★★★
+            # st.experimental_rerun() は削除済み
 
 # --- 5. ダメージ計算結果表示関数 (詳細モード専用) ---
 def calculate_and_print_st_detailed(level, power, 
