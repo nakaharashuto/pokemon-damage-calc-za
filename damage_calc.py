@@ -3,7 +3,7 @@ import math
 import uuid
 import pandas as pd
 
-# --- 1. 共通定数 (省略) ---
+# --- 1. 共通定数 ---
 ZA_CORRECTION_RATIO = 2868 / 4096 # ZA補正係数
 IV_RANGES = {
     "さいこう/きたえた! (31)": (31, 31),
@@ -51,17 +51,14 @@ IV_CHOICES = list(IV_RANGES.keys())
 NATURE_CHOICES = list(NATURE_MODIFIERS.keys())
 BATTLE_CHOICES = list(BATTLE_MODIFIERS.keys())
 TECHNIQUE_PLUS_CHOICES = list(TECHNIQUE_PLUS_MODIFIERS.keys())
-TYPE_LIST = ["ノーマル", "ほのお", "みず", "でんき", "くさ", "こおり", "かくとう", "どく", "じめん", "ひこう", "エスパー", "むし", "いわ", "ゴースト", "ドラゴン", "はがね", "フェアリー", "あく"]
-# 初期化時に更新されるため、ここでは空リストを設定
-VIRTUAL_P_CHOICES = [] 
 
-# --- 1.5 共通インデックス取得 (省略) ---
+# --- 1.5 共通インデックス取得 ---
 STAB_1_0_INDEX = list(STAB_CHOICES.keys()).index("タイプ不一致 (1.0倍)")
 TYPE_1_0_INDEX = list(TYPE_EFFECTIVENESS_CHOICES.keys()).index("等倍 (1.0倍)")
 OTHER_1_0_INDEX = list(OTHER_ITEM_FIELD_MODIFIER_CHOICES.keys()).index("補正なし (1.0倍)")
 
 
-# --- 2. 共通計算関数 (変更なし) ---
+# --- 2. 共通計算関数 ---
 def get_iv_range(choice):
     return IV_RANGES.get(choice, (31, 31))
 
@@ -124,7 +121,7 @@ def perform_damage_calc(level, power, attack, defense, def_hp, final_correction_
     
     return za_dmg_range, za_ttk # ZAの結果のみを返す
 
-# --- 3. セッションステート初期化と管理関数 (変更なし) ---
+# --- 3. セッションステート初期化と管理関数 ---
 
 def initialize_session_state():
     if 'my_pokemons' not in st.session_state:
@@ -168,7 +165,7 @@ def display_pokemon_list():
             stat_info = [f"{s} B:{p[f'{s}_base']} I:{p[f'{s}_iv'][:5]}" for s in stats]
             st.caption(", ".join(stat_info))
 
-# --- 4. ポケモン登録フォーム関数 (変更なし) ---
+# --- 4. ポケモン登録フォーム関数 ---
 def register_pokemon_form():
     st.markdown("---")
     st.subheader("📝 新規ポケモン登録 (種族値・個体値のみ)")
@@ -202,11 +199,14 @@ def register_pokemon_form():
                 'att_stat_name': '攻撃', 'def_stat_name': '防御' # ダミーとして残すがシミュレーションで上書き
             }
             st.session_state.my_pokemons.append(new_pokemon)
+            
+            # VIRTUAL_P_CHOICESを更新
             st.session_state['VIRTUAL_P_CHOICES'] = ["直接実数値入力"] + ["マイポケモン: " + p['name'] for p in st.session_state.get('my_pokemons', [])]
             st.success(f"{p_name} を登録しました！")
-            st.experimental_rerun()
+            
+            # ★★★ st.experimental_rerun() は削除しました ★★★
 
-# --- 5. ダメージ計算結果表示関数 (詳細モード専用の新しい関数を修正) ---
+# --- 5. ダメージ計算結果表示関数 (詳細モード専用) ---
 def calculate_and_print_st_detailed(level, power, 
                                     a_base, a_ev, a_nature, a_battle_mod, a_iv_choice,
                                     d_base, d_ev, d_nature, d_battle_mod, d_iv_choice,
@@ -225,11 +225,13 @@ def calculate_and_print_st_detailed(level, power,
     att_min_value = calculate_stat_value(a_base, a_iv_min, a_ev, level, a_nature, a_battle_mod)
     att_max_value = calculate_stat_value(a_base, a_iv_max, a_ev, level, a_nature, a_battle_mod)
     att_value_range_str = f"{att_min_value}～{att_max_value}"
+    if att_min_value == att_max_value: att_value_range_str = str(att_min_value)
     
     # 防御側 実数値ブレ幅
     def_min_value = calculate_stat_value(d_base, d_iv_min, d_ev, level, d_nature, d_battle_mod)
     def_max_value = calculate_stat_value(d_base, d_iv_max, d_ev, level, d_nature, d_battle_mod)
     def_value_range_str = f"{def_min_value}～{def_max_value}"
+    if def_min_value == def_max_value: def_value_range_str = str(def_min_value)
 
 
     # 3. ダメージ最大値の計算に必要な実数値 (攻MAX vs 防MIN)
@@ -251,32 +253,35 @@ def calculate_and_print_st_detailed(level, power,
     za_min_damage = math.floor(za_result_min_raw * 0.85)
 
     # 5. TTK計算用のHP実数値 (HPは最大値を使用し、最も耐久がある状態を想定)
-    def_hp_value = calculate_hp_value(d_hp_base, d_hp_iv_max, d_hp_ev, level)
+    # HPのブレ幅表示も対応
+    def_hp_value_max = calculate_hp_value(d_hp_base, d_hp_iv_max, d_hp_ev, level)
+    def_hp_value_min = calculate_hp_value(d_hp_base, d_hp_iv_min, d_hp_ev, level)
+    def_hp_range_str = f"{def_hp_value_min}～{def_hp_value_max}"
+    if def_hp_value_min == def_hp_value_max: def_hp_range_str = str(def_hp_value_max)
     
     # 6. 結果の整形
     za_dmg_range = f"{za_min_damage}～{za_result_max}"
-    za_ttk = calculate_ttk(za_min_damage, za_result_max, def_hp_value)
     
-    # ★★★ 変更点: 実数値のブレ幅を表示 ★★★
+    # TTKは、攻最小 vs 防最大 で計算された最小ダメージ、および攻最大 vs 防最小 で計算された最大ダメージを使用し、HP MAXに対して計算
+    za_ttk = calculate_ttk(za_min_damage, za_result_max, def_hp_value_max)
+    
+    # 実数値のブレ幅を表示
     st.markdown(f"**--- 計算結果 (ダメージブレ幅は設定された個体値幅を考慮) ---**")
     st.markdown(f"**参照実数値**: 攻撃: **{att_value_range_str}** / 防御: **{def_value_range_str}**")
     
     st.info(f"🚀 **ZA (仮説) ダメージ幅**: **{za_dmg_range}** ダメージ")
     
-    st.markdown(f"**--- TTK (防御側HP: {def_hp_value} (IV MAX)) ---**")
+    st.markdown(f"**--- TTK (防御側HP: {def_hp_range_str}) ---**")
     
     st.write(f"  **ZA TTK**: {za_ttk}")
-    st.caption(f"（TTKは設定HPの最大実数値 ({d_hp_iv_max}) に対して計算）")
-    # ★★★ 変更点: ここまで ★★★
+    st.caption(f"（TTKは設定HPの最大実数値 ({def_hp_value_max}) に対して計算）")
 
-# --- 6. 各計算モード関数 (変更なし) ---
-
-# 詳細モード (種族値/EV入力) - 変更なし (calculate_and_print_st_detailedのみ変更)
+# --- 6. 各計算モード関数 (詳細モード) ---
 def run_detailed_mode_st_functional():
     st.subheader("詳細モード: 種族値/EV入力")
     
     with st.form("easy_calc_form"):
-        # 1. 共通設定 (省略)
+        # 1. 共通設定 (レベル)
         level = st.number_input("ポケモンのレベル", min_value=1, max_value=100, value=50, step=1, key="easy_level")
         
         st.markdown("---")
@@ -295,7 +300,7 @@ def run_detailed_mode_st_functional():
         
         st.markdown("---")
 
-        # 3. ⚙️ 技と補正の設定 (省略)
+        # 3. ⚙️ 技と補正の設定
         st.markdown("#### ⚙️ 技と補正の設定 (攻撃側が持つ補正)")
         power = st.number_input("技の威力", min_value=1, value=100, step=1, key="easy_power")
         
@@ -340,7 +345,7 @@ def run_detailed_mode_st_functional():
         
         st.markdown("---")
 
-        # 5. 壁（リフレクター/ひかりのかべ）補正 (省略)
+        # 5. 壁（リフレクター/ひかりのかべ）補正
         st.markdown(f"#### 🛡️ 壁（リフレクター/ひかりのかべ）補正 (補正: {WALL_MODIFIER}倍) (防御側が持つ補正)")
         
         wall_mod = 1.0
@@ -349,7 +354,7 @@ def run_detailed_mode_st_functional():
         if "0.5" in wall_mod_select:
              wall_mod = WALL_MODIFIER
 
-        # 総補正の計算 (省略)
+        # 総補正の計算
         a_nature_mod = NATURE_MODIFIERS[a_nature_choice]
         a_battle_mod = BATTLE_MODIFIERS[a_battle_choice]
         d_nature_mod = NATURE_MODIFIERS[d_nature_choice]
@@ -377,9 +382,8 @@ def run_detailed_mode_st_functional():
                 final_correction_ratio
             )
             
-# 簡単モード (実数値入力) - 変更なし
+# 簡単モード (実数値入力) 
 def run_easy_mode_st_functional():
-    # 既存の簡単モードのコードをそのまま維持
     def calculate_and_print_st(level, power, attack, defense, def_hp, final_correction_ratio, stat_type):
         """計算を実行し、ZAの結果を整形してStreamlitに出力する (SV結果は除外)"""
         
@@ -397,13 +401,13 @@ def run_easy_mode_st_functional():
     st.subheader("簡単モード: 実数値で入力")
     
     with st.form("detailed_calc_form"):
-        # 1. 共通設定 (省略)
+        # 1. 共通設定 (レベル)
         st.markdown("#### 共通設定")
         level = st.number_input("ポケモンのレベル", min_value=1, max_value=100, value=50, step=1, key="det_level")
         
         st.markdown("---")
 
-        # 2. ⚔️ 攻撃側の実数値と補正 (省略)
+        # 2. ⚔️ 攻撃側の実数値と補正
         st.markdown("#### ⚔️ 攻撃側の実数値と補正")
         col_att_val, col_att_bm = st.columns(2) # カラムを追加
         with col_att_val:
@@ -414,7 +418,7 @@ def run_easy_mode_st_functional():
             
         st.markdown("---")
 
-        # 3. ⚙️ 技と補正の設定 (省略)
+        # 3. ⚙️ 技と補正の設定
         st.markdown("#### ⚙️ 技と補正の設定 (攻撃側が持つ補正)")
         power = st.number_input("技の威力", min_value=1, value=100, step=1, key="det_power")
         
@@ -439,7 +443,7 @@ def run_easy_mode_st_functional():
         
         st.markdown("---")
 
-        # 4. 🛡️ 防御側の実数値と補正 (省略)
+        # 4. 🛡️ 防御側の実数値と補正
         st.markdown("#### 🛡️ 防御側の実数値と補正")
         col_def_val, col_def_bm = st.columns(2) # カラムを追加
         with col_def_val:
@@ -452,7 +456,7 @@ def run_easy_mode_st_functional():
         
         st.markdown("---")
 
-        # 5. 壁（リフレクター/ひかりのかべ）補正 (省略)
+        # 5. 壁（リフレクター/ひかりのかべ）補正
         st.markdown(f"#### 🛡️ 壁（リフレクター/ひかりのかべ）補正 (補正: {WALL_MODIFIER}倍) (防御側が持つ補正)")
         
         wall_mod = 1.0
@@ -462,7 +466,7 @@ def run_easy_mode_st_functional():
              wall_mod = WALL_MODIFIER
 
 
-        # 総補正の計算 (省略)
+        # 総補正の計算
         base_correction_ratio = stab_mod * type_mod * other_mod * wall_mod
         final_correction_ratio = base_correction_ratio * tech_plus_mod
         
@@ -487,12 +491,11 @@ def run_easy_mode_st_functional():
                                   f"設定値 (攻:{final_attack_value} / 防:{final_defense_value})")
 
 
-# 関数名と機能の対応を維持
-run_detailed_mode_st = run_detailed_mode_st_functional # 詳細モード（種族値/EV入力）
-run_easy_mode_st = run_easy_mode_st_functional # 簡単モード（実数値入力）
+run_detailed_mode_st = run_detailed_mode_st_functional
+run_easy_mode_st = run_easy_mode_st_functional
 
 
-# --- 7. マイポケモン vs 仮想敵シミュレーションモード (変更なし) ---
+# --- 7. マイポケモン vs 仮想敵シミュレーションモード ---
 def get_stats_from_settings(p_data, ev_dict, nature_dict, battle_mod_dict, level):
     """登録情報とシミュレーション入力から全実数値 (MAX/MIN) を計算して返す"""
     stats_result = {}
@@ -606,7 +609,6 @@ def run_battle_sim_mode_st():
     stats = ['H', 'A', 'B', 'C', 'D', 'S']
     cols = st.columns(6)
     for i, stat in enumerate(stats):
-        # 初期値を全て 0 に設定済み
         default_ev = 0 
         with cols[i]:
             ev_inputs[stat] = st.number_input(f"{stat} EV", min_value=0, max_value=252, value=default_ev, step=4, key=f"sim_ev_{stat}")
@@ -618,7 +620,6 @@ def run_battle_sim_mode_st():
     nature_cols = st.columns(4)
     for i, stat in enumerate(nature_stats):
         with nature_cols[i]:
-            # デフォルトを「補正なし (neutral)」(1.0倍) に設定
             nature_inputs[stat] = st.selectbox(f"{stat} 性格補正", options=NATURE_CHOICES, index=0, key=f"sim_nature_{stat}")
             
     # 戦闘中能力変化補正入力
@@ -628,12 +629,10 @@ def run_battle_sim_mode_st():
     battle_cols = st.columns(4)
     for i, stat in enumerate(battle_stats):
         with battle_cols[i]:
-            # 攻撃側ならA/C、防御側ならB/Dにのみ変更UIを表示
             if (is_att_vs_def and stat in ['A', 'C']) or (not is_att_vs_def and stat in ['B', 'D']):
-                # デフォルトを「能力変化なし (1.0倍)」に設定
                 battle_mod_inputs[stat] = st.selectbox(f"{stat} 能力変化", options=BATTLE_CHOICES, index=0, key=f"sim_bm_{stat}")
             else:
-                battle_mod_inputs[stat] = BATTLE_CHOICES[0] # デフォルト値 "能力変化なし (1.0倍)"
+                battle_mod_inputs[stat] = BATTLE_CHOICES[0] 
             
     # 全実数値計算 (MAX/MIN)
     my_stats = get_stats_from_settings(
@@ -642,6 +641,7 @@ def run_battle_sim_mode_st():
         my_poke['level']
     )
     
+    # 実数値のブレ幅表示
     st.caption(f"実数値 (MAX/MIN): H:{my_stats['H_max']}/{my_stats['H_min']}, A:{my_stats['A_max']}/{my_stats['A_min']}, C:{my_stats['C_max']}/{my_stats['C_min']}, B:{my_stats['B_max']}/{my_stats['B_min']}, D:{my_stats['D_max']}/{my_stats['D_min']}")
     st.markdown("---")
     
@@ -666,17 +666,14 @@ def run_battle_sim_mode_st():
     col_power, col_stab, col_tech = st.columns(3)
     with col_power: power = st.number_input("技の威力", min_value=1, value=100, step=1, key="sim_power")
     with col_stab: 
-        # デフォルトを「タイプ不一致 (1.0倍)」に設定
         stab_choice = st.selectbox("STAB (タイプ一致)", options=list(STAB_CHOICES.keys()), index=STAB_1_0_INDEX, key="sim_stab")
         att_stab_mod = STAB_CHOICES[stab_choice]
     with col_tech: 
-        # デフォルトを「通常 (1.0倍)」に設定
         tech_plus_choice = st.selectbox("ZA独自の補正（技プラス）", options=TECHNIQUE_PLUS_MODIFIERS, index=0, key="sim_tech_plus")
         att_tech_plus_mod = TECHNIQUE_PLUS_MODIFIERS[tech_plus_choice]
 
     col_item, col_wall = st.columns(2)
     with col_item: 
-        # デフォルトを「補正なし (1.0倍)」に設定
         other_choice = st.selectbox("道具・フィールド補正", options=list(OTHER_ITEM_FIELD_MODIFIER_CHOICES.keys()), index=OTHER_1_0_INDEX, key="sim_other")
         att_other_mod = OTHER_ITEM_FIELD_MODIFIER_CHOICES[other_choice]
         if other_choice == "その他 (任意)":
@@ -686,7 +683,6 @@ def run_battle_sim_mode_st():
     with col_wall:
         st.markdown(f"##### 壁 (防御側補正: {WALL_MODIFIER}倍)")
         wall_mod = 1.0
-        # デフォルトを「壁なし (1.0)」に設定
         wall_mod_select = st.radio("壁の適用方法", ["壁なし (1.0)", "壁あり (0.5)"], horizontal=True, index=0, key="sim_wall_apply_simple")
         if "0.5" in wall_mod_select:
              wall_mod = WALL_MODIFIER
@@ -696,7 +692,7 @@ def run_battle_sim_mode_st():
     st.markdown("---")
     
     # ------------------------------------
-    # 4. 仮想敵 3体の設定 (防御側は個別にタイプ相性)
+    # 4. 仮想敵 3体の設定 
     # ------------------------------------
     st.subheader("### 4. 📊 仮想敵 3体/攻撃技の設定") 
 
@@ -705,6 +701,7 @@ def run_battle_sim_mode_st():
     for i in range(1, 4):
         st.markdown(f"##### 仮想敵 {i}")
         
+        # 仮想敵選択肢は st.session_state['VIRTUAL_P_CHOICES'] から取得
         virtual_choice = st.selectbox(
             "能力値の参照元", 
             options=st.session_state.get('VIRTUAL_P_CHOICES', ["直接実数値入力"]), 
@@ -714,11 +711,10 @@ def run_battle_sim_mode_st():
         # 仮想敵のデフォルト値設定（直接入力の目安またはマイポケモンからの参照）
         enemy_hp = 200
         enemy_stat_val = 150
-        enemy_power = power # 攻撃側が自分なら共通技威力
+        enemy_power = power 
         
         enemy_p = None
         if "マイポケモン:" in virtual_choice:
-            # 仮想敵の種族値/個体値からEV0, 性格1.0, 戦闘1.0の値を参照
             stat_max, _, hp_max, _, enemy_p, _ = get_virtual_pokemon_stats(
                 virtual_choice, st.session_state.my_pokemons, def_stat_name if is_att_vs_def else att_stat_name, 'H'
             )
@@ -734,8 +730,9 @@ def run_battle_sim_mode_st():
         
         # 実数値入力/参照
         with col_stat_val:
+            stat_val = enemy_stat_val # 初期値として設定
             if is_att_vs_def:
-                # 攻撃側が自分: 仮想敵は防御側
+                # 攻撃側が自分: 仮想敵は防御側 (実数値とHPを入力)
                 if virtual_choice == "直接実数値入力":
                     stat_val = st.number_input(f"{def_stat_name}実数値", min_value=1, value=enemy_stat_val, step=1, key=f"enemy_{i}_def_val")
                     enemy_hp = st.number_input("HP実数値", min_value=1, value=enemy_hp, step=1, key=f"enemy_{i}_hp_val")
@@ -744,14 +741,11 @@ def run_battle_sim_mode_st():
                     st.text_input("HP実数値 (参照/目安)", value=enemy_hp, disabled=True, key=f"enemy_{i}_hp_disp")
                 enemy_power = power # 攻撃側が自分なので共通威力
             else:
-                # 防御側が自分: 仮想敵は攻撃側
+                # 防御側が自分: 仮想敵は攻撃側 (実数値のみを入力/参照)
                 if virtual_choice == "直接実数値入力":
                     stat_val = st.number_input(f"{att_stat_name}実数値", min_value=1, value=enemy_stat_val, step=1, key=f"enemy_{i}_att_val")
                 else:
                     st.text_input(f"{att_stat_name}実数値 (参照/目安)", value=enemy_stat_val, disabled=True, key=f"enemy_{i}_att_disp")
-                
-                # 防御側が自分の場合、HPは自分のポケモンから取得
-                stat_val = stat_val if virtual_choice == "直接実数値入力" else enemy_stat_val
         
         # 攻撃側が相手の場合、技威力とアイテム補正を個別に設定
         if not is_att_vs_def:
@@ -761,26 +755,21 @@ def run_battle_sim_mode_st():
             st.caption("--- 仮想アタッカーの個別補正 ---")
             col_e_stab, col_e_item, col_e_tech = st.columns(3)
             with col_e_stab: 
-                # デフォルトを「タイプ不一致 (1.0倍)」に設定
                 stab_choice_e = st.selectbox("STAB", options=list(STAB_CHOICES.keys()), index=STAB_1_0_INDEX, key=f"enemy_{i}_stab")
                 stab_mod_e = STAB_CHOICES[stab_choice_e]
             with col_e_item: 
-                # デフォルトを「補正なし (1.0倍)」に設定
                 other_choice_e = st.selectbox("道具補正", options=list(OTHER_ITEM_FIELD_MODIFIER_CHOICES.keys()), index=OTHER_1_0_INDEX, key=f"enemy_{i}_other")
                 other_mod_e = OTHER_ITEM_FIELD_MODIFIER_CHOICES[other_choice_e]
             with col_e_tech: 
-                # デフォルトを「通常 (1.0倍)」に設定
                 tech_plus_choice_e = st.selectbox("ZA補正", options=TECHNIQUE_PLUS_MODIFIERS, index=0, key=f"enemy_{i}_tech_plus")
                 tech_plus_mod_e = TECHNIQUE_PLUS_MODIFIERS[tech_plus_choice_e]
             
-            att_base_mod = stab_mod_e * other_mod_e * tech_plus_mod_e # 仮想アタッカーが持つ補正
+            att_base_mod = stab_mod_e * other_mod_e * tech_plus_mod_e 
             
         with col_type_mod: 
-            # デフォルトを「等倍 (1.0倍)」に設定
             type_mod_i = st.selectbox("タイプ相性", options=list(TYPE_EFFECTIVENESS_CHOICES.keys()), index=TYPE_1_0_INDEX, key=f"enemy_{i}_type")
             type_mod_val = TYPE_EFFECTIVENESS_CHOICES[type_mod_i]
 
-        # 最終補正 = (攻撃側が持つ基本補正 * 相性 * 壁)
         final_correction_ratio = att_base_mod * type_mod_val * wall_mod
         
         enemy_stats.append({
@@ -870,7 +859,7 @@ def run_battle_sim_mode_st():
         st.dataframe(df, use_container_width=True)
 
 
-# --- 8. メイン実行関数 (変更なし) ---
+# --- 8. メイン実行関数 ---
 def main_st():
     st.set_page_config(page_title="ポケモンダメージ計算機 (ZA補正対応)", layout="wide")
     st.title("🛡️⚔️ ポケモンダメージ計算機 (ZA仮説補正)")
@@ -903,7 +892,7 @@ def main_st():
     st.markdown("""
     ---
     ### 補足情報
-    * **表示される結果について**: 「詳細モード」では、**設定した個体値の最小値から最大値までのブレを全て考慮したダメージ幅**を、単一の結果として表示しています。また、参照した攻撃/防御の実数値ブレ幅を併記しました。
+    * **表示される結果について**: 「詳細モード」では、**設定した個体値の最小値から最大値までのブレを全て考慮したダメージ幅**を、単一の結果として表示します。
     * **TTK (Time To Knockout)**: ダメージ乱数最小/最大に基づき、敵HPを倒すのに必要な最小発数〜最大発数を示します。TTK計算には、防御側の設定個体値の**最大値**で計算されたHPを使用します。
     * **ZA補正係数**: 現在判明しているレイドボス補正（2868/4096）を暫定的に採用しています。
     """)
