@@ -216,7 +216,8 @@ def register_pokemon_form():
             st.session_state['VIRTUAL_P_CHOICES'] = ["直接実数値入力"] + ["マイポケモン: " + p['name'] for p in st.session_state.get('my_pokemons', [])]
             st.success(f"{p_name} を登録しました！")
             
-            # st.experimental_rerun() は削除済み
+            # Streamlitの再実行は不要なためコメントアウトまたは削除
+            # st.experimental_rerun() 
 
 # --- 5. ダメージ計算結果表示関数 (詳細モード専用) ---
 def calculate_and_print_st_detailed(level, power, 
@@ -558,10 +559,10 @@ def get_stats_from_settings(p_data, ev_dict, nature_dict, battle_mod_dict, level
     return stats_result
 
 
-def get_virtual_pokemon_stats(choice, my_poke_list, target_stat_name, hp_stat_name=None):
+def get_virtual_pokemon_stats(choice, my_poke_list, target_stat_name, hp_stat_name=None, ev_value=0, hp_ev_value=0):
     """
     仮想敵 (マイポケモン参照時) の素の種族値/個体値からの実数値計算。
-    仮想敵はEV=0, 性格補正=1.0, 戦闘補正=1.0の状態でMAX実数値を返す。
+    入力されたEV, 性格補正=1.0, 戦闘補正=1.0で実数値を返す。
     """
     if choice == "直接実数値入力":
         return None, None, None, None, None, None
@@ -571,7 +572,7 @@ def get_virtual_pokemon_stats(choice, my_poke_list, target_stat_name, hp_stat_na
     p = next(p for p in my_poke_list if p['name'] == poke_name)
     level = p['level']
     
-    # 攻撃/防御能力値の計算 (常にEV0, 性格1.0, 戦闘1.0で計算)
+    # 攻撃/防御能力値の計算 (入力EV, 性格1.0, 戦闘1.0で計算)
     stat_map = {'攻撃': 'A', '特攻': 'C', '防御': 'B', '特防': 'D'}
     stat_key = stat_map.get(target_stat_name, 'A')
 
@@ -579,16 +580,18 @@ def get_virtual_pokemon_stats(choice, my_poke_list, target_stat_name, hp_stat_na
     iv_choice = p[f'{stat_key}_iv']
     iv_min, iv_max = get_iv_range(iv_choice)
     
-    stat_max = calculate_stat_value(base, iv_max, 0, level, 1.0, 1.0)
-    stat_min = calculate_stat_value(base, iv_min, 0, level, 1.0, 1.0)
+    # ev_value を使用
+    stat_max = calculate_stat_value(base, iv_max, ev_value, level, 1.0, 1.0)
+    stat_min = calculate_stat_value(base, iv_min, ev_value, level, 1.0, 1.0)
 
-    # HPの計算 (常にEV0, 性格1.0で計算)
+    # HPの計算 (入力HP_EV, 性格1.0で計算)
     hp_max = None
     hp_min = None
     if hp_stat_name == 'H':
         hp_iv_min, hp_iv_max = get_iv_range(p['H_iv'])
-        hp_max = calculate_hp_value(p['H_base'], hp_iv_max, 0, level)
-        hp_min = calculate_hp_value(p['H_base'], hp_iv_min, 0, level)
+        # hp_ev_value を使用
+        hp_max = calculate_hp_value(p['H_base'], hp_iv_max, hp_ev_value, level)
+        hp_min = calculate_hp_value(p['H_base'], hp_iv_min, hp_ev_value, level)
 
     return stat_max, stat_min, hp_max, hp_min, p, level
 
@@ -777,18 +780,42 @@ def run_battle_sim_mode_st():
         enemy_hp = 200
         enemy_stat_val = 150
         enemy_power = power 
+        enemy_stat_ev = 0
+        enemy_hp_ev = 0
         
-        enemy_p = None
-        # マイポケモン参照時の、目安/参照値を取得
-        if "マイポケモン:" in virtual_choice:
+        # 仮想敵のEV入力欄 (参照時のみ出現)
+        is_virtual_ref = ("マイポケモン:" in virtual_choice)
+        
+        if is_virtual_ref:
+            st.caption(f"参照元: {virtual_choice} の素の能力値をベースに計算します。")
+            col_ref_ev, col_ref_hp_ev = st.columns(2)
+            
+            # 参照する能力のEV入力
             target_stat_name_ref = def_stat_name if is_att_vs_def else att_stat_name
+            with col_ref_ev:
+                enemy_stat_ev = st.number_input(
+                    f"{target_stat_name_ref} EV", 
+                    min_value=0, max_value=252, value=0, step=4, 
+                    key=f"enemy_{i}_stat_ev_input"
+                )
+            
+            # 自分のポケモンが攻撃側なら、相手は防御側なのでHP EVも入力
+            if is_att_vs_def:
+                with col_ref_hp_ev:
+                    enemy_hp_ev = st.number_input(
+                        "HP EV", 
+                        min_value=0, max_value=252, value=0, step=4, 
+                        key=f"enemy_{i}_hp_ev_input"
+                    )
+            
+            # EVを適用して実数値を計算
             stat_max, _, hp_max, _, enemy_p, _ = get_virtual_pokemon_stats(
-                virtual_choice, st.session_state.my_pokemons, target_stat_name_ref, 'H'
+                virtual_choice, st.session_state.my_pokemons, target_stat_name_ref, 'H', 
+                ev_value=enemy_stat_ev, hp_ev_value=enemy_hp_ev 
             )
-            if enemy_p:
-                enemy_stat_val = stat_max if stat_max is not None else 150
-                enemy_hp = hp_max if hp_max is not None else 200
-                st.caption(f"参照ポケモン: **{enemy_p['name']}** (EV0/性格補正なしのMAX実数値を使用)")
+            
+            enemy_stat_val = stat_max if stat_max is not None else 150
+            enemy_hp = hp_max if hp_max is not None else 200
 
         col_name, col_stat_val, col_type_mod, col_power_i = st.columns(4)
         
@@ -797,22 +824,23 @@ def run_battle_sim_mode_st():
         
         # 実数値入力/参照
         with col_stat_val:
-            stat_val = enemy_stat_val # 初期値として設定
-            if is_att_vs_def:
-                # 攻撃側が自分: 仮想敵は防御側 (実数値とHPを入力)
-                if virtual_choice == "直接実数値入力":
+            stat_val = enemy_stat_val 
+
+            if virtual_choice == "直接実数値入力":
+                if is_att_vs_def:
+                    # 攻撃側が自分: 仮想敵は防御側 (実数値とHPを入力)
                     stat_val = st.number_input(f"{def_stat_name}実数値", min_value=1, value=enemy_stat_val, step=1, key=f"enemy_{i}_def_val")
                     enemy_hp = st.number_input("HP実数値", min_value=1, value=enemy_hp, step=1, key=f"enemy_{i}_hp_val")
                 else:
-                    st.text_input(f"{def_stat_name}実数値 (参照/目安)", value=enemy_stat_val, disabled=True, key=f"enemy_{i}_def_disp")
-                    st.text_input("HP実数値 (参照/目安)", value=enemy_hp, disabled=True, key=f"enemy_{i}_hp_disp")
-                enemy_power = power # 攻撃側が自分なので共通威力
-            else:
-                # 防御側が自分: 仮想敵は攻撃側 (実数値のみを入力/参照)
-                if virtual_choice == "直接実数値入力":
+                    # 防御側が自分: 仮想敵は攻撃側 (実数値のみを入力)
                     stat_val = st.number_input(f"{att_stat_name}実数値", min_value=1, value=enemy_stat_val, step=1, key=f"enemy_{i}_att_val")
+            else:
+                # 参照時 (EV付きで表示)
+                if is_att_vs_def:
+                    st.text_input(f"{def_stat_name}実数値 (EV:{enemy_stat_ev})", value=enemy_stat_val, disabled=True, key=f"enemy_{i}_def_disp")
+                    st.text_input(f"HP実数値 (EV:{enemy_hp_ev})", value=enemy_hp, disabled=True, key=f"enemy_{i}_hp_disp")
                 else:
-                    st.text_input(f"{att_stat_name}実数値 (参照/目安)", value=enemy_stat_val, disabled=True, key=f"enemy_{i}_att_disp")
+                    st.text_input(f"{att_stat_name}実数値 (EV:{enemy_stat_ev})", value=enemy_stat_val, disabled=True, key=f"enemy_{i}_att_disp")
         
         # 攻撃側が相手の場合、技威力とアイテム補正を個別に設定
         current_att_base_mod = att_base_mod
